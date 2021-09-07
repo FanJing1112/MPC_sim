@@ -1,5 +1,4 @@
 # Drone Simulation before outdoor experiment(September, 2021)
-#### SeungHyun Lee
 
 <br>
 
