@@ -10,19 +10,26 @@ find_package(Eigen3 REQUIRED)
 find_package(OsqpEigen REQUIRED)
 
 find_package(catkin REQUIRED COMPONENTS
+#    roscpp
+#    std_msgs
+#    geometry_msgs
+##    tf
+#    nav_msgs
+#    sensor_msgs
+##    cv_bridge
+#    mavros
+#    mavros_extras
+#    mavros_msgs
+#    tf2_ros
+#    pcl_conversions
+#    visualization_msgs
+#    pcl_ros
     roscpp
-    std_msgs
-    geometry_msgs
-    tf
     nav_msgs
+    geometry_msgs
     sensor_msgs
-#    cv_bridge
-    mavros
-    mavros_extras
-    mavros_msgs
-    tf2_ros
+    std_msgs
     pcl_conversions
-    visualization_msgs
     pcl_ros
 )
 
@@ -41,7 +48,6 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
   ${OsqpEigen_INCLUDE_DIR}
   ${OpenCV_INCLUDE_DIR}
-  ${OpenMP_INCLUDE_DIR}
 )
 
 catkin_package(

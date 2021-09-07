@@ -38,6 +38,7 @@
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <visualization_msgs/MarkerArray.h>
 #include <visualization_msgs/Marker.h>
 
 using namespace std;
@@ -57,23 +58,16 @@ class Simulator{
     ros::Publisher drone_traj_pub;
     ros::Publisher target_traj_pub;
     ros::Publisher waypts_pub;
-    ros::Publisher debug_pts_pub;
+//    ros::Publisher debug_pts_pub;
     ros::Publisher head_pub;
 
     bool detect_check=false, depth_check=false, drone_pose_check_first=false, drone_pose_check=false, debug=false, deep_debug=false, traj_gen_check=false;
     double traj_gen_hz,traj_gen_hz2, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, predict_time=0.0;
-<<<<<<< HEAD
     int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0, count3=0;
     double curr_vel_x, curr_vel_y, curr_vel_z, curr_x, curr_y, curr_z, curr_roll, curr_pitch, curr_yaw=0;
     double k_pos, k_vel, k_ff=0, k_yaw, rand_coeff;
     double goal_x, goal_y, goal_z, goal_vx, goal_vy, goal_vz=0;
     const double PI = 3.1415926;
-=======
-    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0;
-    double curr_vel_x, curr_vel_y, curr_vel_z, curr_x, curr_y, curr_z, curr_roll, curr_pitch, curr_yaw=0;
-    double k_pos, k_vel, k_ff=0, k_yaw, rand_coeff;
-    double goal_x, goal_y, goal_z, goal_vx, goal_vy, goal_vz=0;
->>>>>>> b28ad14b225415f566c4c12a410f502b5c916062
     std::string depth_topic, bbox_topic, body_base, fixed_frame;
 
     geometry_msgs::PoseStamped drone_pose;
@@ -84,7 +78,7 @@ class Simulator{
     vector<double> xx;
     vector<double> yy;
     vector<double> zz;
-    vector<MatrixXd> queued_M1, queued_M2, queued_M3, accumulated_M1, accumulated_M2, accumulated_M3;
+    vector<MatrixXd> queued_M1, queued_M2, queued_M3, accumulated_M1, accumulated_M2, accumulated_M3, accumulated_waypoint;
     vector<VectorXd> queued_ts, accumulated_ts, way_pos, way_vel, drone_pos;
     VectorXd ts, M1, M2, M3;
     Vector3f world_detected_point = Vector3f::Zero(3);
@@ -136,8 +130,9 @@ class Simulator{
         odom_sub = nh.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 100, &Simulator::odom_callback, this);
         drone_traj_pub = nh.advertise<nav_msgs::Path>("/drone_traj", 10);
         target_traj_pub = nh.advertise<nav_msgs::Path>("/target_traj", 10);
-        waypts_pub = nh.advertise<sensor_msgs::PointCloud2>("/waypts", 10);
-        debug_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/debug_pts", 10);
+//        waypts_pub = nh.advertise<sensor_msgs::PointCloud2>("/waypts", 10);
+        waypts_pub = nh.advertise<visualization_msgs::MarkerArray>("/waypts", 10);
+//        debug_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/debug_pts", 10);
         local_vel_pub = nh.advertise<geometry_msgs::Twist>("/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
         head_pub = nh.advertise<visualization_msgs::Marker>( "/heading", 0 );
         traj_gen_thread2 = nh.createTimer(ros::Duration(1/traj_gen_hz2), &Simulator::drone_controller, this);
@@ -165,15 +160,9 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     VectorXd pos = VectorXd::Zero(3);
     pos(0)=curr_x; pos(1)=curr_y; pos(2)=curr_z;
     drone_pos.push_back(pos);
-<<<<<<< HEAD
 //    if (int(drone_pos.size())>100){
 //        drone_pos.erase(drone_pos.begin());
 //    }
-=======
-    if (int(drone_pos.size())>100){
-        drone_pos.erase(drone_pos.begin());
-    }
->>>>>>> b28ad14b225415f566c4c12a410f502b5c916062
     nav_msgs::Path drone_traj;
     drone_traj.header.stamp = ros::Time::now();
     drone_traj.header.frame_id = fixed_frame;
@@ -214,47 +203,16 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
 void Simulator::drone_controller(const ros::TimerEvent& event){
 
     //Generate point
-<<<<<<< HEAD
-//    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
-//    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
-
-//    //For visualization target movement generate 1) almost square
-//    if(count3<30){
-//        world_detected_point(0)=Random(count3/30*8+2-0.1,count3/30*8+2+0.1);
-//        world_detected_point(1)=Random(-0.1,0.1);
-//    }
-//    else if(count3<60){
-//        world_detected_point(0)=Random(10-0.1,10+0.1);
-//        world_detected_point(1)=Random((count3-30)/3-0.1,(count3-30)/3+0.1);
-//    }
-//    else if(count3<120){
-//        world_detected_point(0)=Random((90-count3)/3-0.1,(90-count3)/3+0.1);
-//        world_detected_point(1)=Random(10-0.1,10+0.1);
-//    }
-//    else if(count3<180){
-//        world_detected_point(0)=Random(-10-0.1,-10+0.1);
-//        world_detected_point(1)=Random((150-count3)/3-0.1,(150-count3)/3+0.1);
-//    }
-//    else if(count3<240){
-//        world_detected_point(0)=Random((count3-210)/3-0.1,(count3-210)/3+0.1);
-//        world_detected_point(1)=Random(-10-0.1,-10+0.1);
-//    }
-//    else if(count3<270){
-//        world_detected_point(0)=Random(10-0.1,10+0.1);
-//        world_detected_point(1)=Random((count3-270)/3-0.1,(count3-270)/3+0.1);
-//    }
-//    count3++;
+    //Real random
+    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
+    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
 
     //For visualization target movement generate 2) almost circle
 
-    world_detected_point(0)=10*cos(PI/120*(count3));
-    world_detected_point(1)=10*sin(PI/120*(count3));
+//    world_detected_point(0)=Random(10*cos(PI/120*(count3))-rand_coeff/6, 10*cos(PI/120*(count3))+rand_coeff/6);
+//    world_detected_point(1)=Random(10*sin(PI/120*(count3))-rand_coeff/6, 10*sin(PI/120*(count3))+rand_coeff/6);
     count3++;
 
-=======
-    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
-    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
->>>>>>> b28ad14b225415f566c4c12a410f502b5c916062
     world_detected_point(2)=Random(1.7, 1.8);
 
     auto duration = duration_cast<microseconds>(high_resolution_clock::now() - start);
@@ -265,12 +223,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         start = high_resolution_clock::now();
         detect_check=true;
     }
-    //visualize queued pts
-    pcl::PointCloud<pcl::PointXYZ> temp_for_vis;
-    for (int l=0; l<int(queued_pts.size()); l++){
-        temp_for_vis.push_back(queued_pts[l]);
-    }
-//    debug_pts_pub.publish(cloud2msg(temp_for_vis, fixed_frame));
 
     if(detect_check){
         double x = double(queued_pts[last].x);
@@ -293,6 +245,36 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
                 waypts(1,i)=yy[i];
                 waypts(2,i)=zz[i];
             }
+            accumulated_waypoint.push_back(waypts);
+            int k=0;
+
+            //Visualize waypts
+            //I don't know why, but cloud2msg cannot work. So instantly use markerarray
+            visualization_msgs::MarkerArray waypoints;
+            for (int i=0; i<int(accumulated_waypoint.size()); i++) {
+                MatrixXd temp_waypts = accumulated_waypoint[i];
+                for (int j=0; j<temp_waypts.cols();j++){
+                    visualization_msgs::Marker waypts;
+                    waypts.header.frame_id = fixed_frame;
+                    waypts.header.stamp = ros::Time::now();
+                    waypts.type=2;
+                    waypts.id = k;
+                    waypts.pose.position.x = temp_waypts(0,j);
+                    waypts.pose.position.y = temp_waypts(1,j);
+                    waypts.pose.position.z = temp_waypts(2,j);
+                    waypts.pose.orientation.w = 1.0;
+                    waypts.scale.x = 0.2;
+                    waypts.scale.y = 0.2;
+                    waypts.scale.z = 0.2;
+                    waypts.color.a = 1.0;
+                    waypts.color.r = 0.5;
+                    k++;
+
+                    waypoints.markers.push_back(waypts);
+                }
+            }
+            waypts_pub.publish(waypoints);
+
             ts = arrangeT(waypts);
             MatrixXd xxx = waypts.row(0);
             MatrixXd yyy = waypts.row(1);
@@ -357,13 +339,8 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             nav_msgs::Path target_traj;
             target_traj.header.stamp = ros::Time::now();
             target_traj.header.frame_id = fixed_frame;
-<<<<<<< HEAD
             for (int i=0 ; i<int(accumulated_M1.size()); i++){
                 VectorXd temp_M1(accumulated_M1[i]); VectorXd temp_M2(accumulated_M2[i]); VectorXd temp_M3(accumulated_M3[i]); VectorXd temp_ts(accumulated_ts[i]);
-=======
-            for (int i=0 ; i<int(queued_M1.size()); i++){
-                VectorXd temp_M1(queued_M1[i]); VectorXd temp_M2(queued_M2[i]); VectorXd temp_M3(queued_M3[i]); VectorXd temp_ts(queued_ts[i]);
->>>>>>> b28ad14b225415f566c4c12a410f502b5c916062
                 for(int j=0 ; j<int(temp_ts.size())-1; j++){
                     for (double t=temp_ts(j); t<temp_ts(j+1); t+=0.05) {
                         geometry_msgs::PoseStamped temp;
@@ -439,7 +416,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         velocity.linear.z = uz;
         velocity.angular.x = 0.0;
         velocity.angular.y = 0.0;
-<<<<<<< HEAD
 //        Case when desired_yaw: pi -> -pi suddenly(drone turn)
         if(abs(desired_yaw-curr_yaw)>abs(desired_yaw+curr_yaw)){
             velocity.angular.z = k_yaw*(desired_yaw+curr_yaw);
@@ -448,9 +424,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
         }
 
-=======
-        velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
->>>>>>> b28ad14b225415f566c4c12a410f502b5c916062
 
         if(debug){
             ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
@@ -546,7 +519,7 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
             A.insert(4*n_poly+4+i,n_coef*i+j) = calc_tvec(ts(i),n_order,0)(j);
             b_lower(4*n_poly+4+i)=waypts(i)-Corridor_r; b_upper(4*n_poly+4+i)=waypts(i)+Corridor_r;
         }
-        //Velocity, acceration constraints(2*n_poly equation)
+        //Velocity, acceleration constraints(2*n_poly equation)
         #pragma omp parallel
         for (int j = 0; j < n_coef; j++){
             A.insert(5*n_poly+4+2*i,n_coef*i+j) = calc_tvec(ts(i),n_order,1)(j);
