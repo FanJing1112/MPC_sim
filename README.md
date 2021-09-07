@@ -2,11 +2,6 @@
 #### SeungHyun Lee
 
 <br>
-
-## 시뮬레이션
-
-
-
 ### Execution
 
 + Run main code
