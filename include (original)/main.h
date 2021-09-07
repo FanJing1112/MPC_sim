@@ -61,14 +61,11 @@ class TrajectoryGeneratorWaypoint{
 
     ros::Publisher head_pub;
     ros::Publisher drone_traj_pub;
-
-    ros::Publisher traj_pub;
-    ros::Publisher traj_pub2;
     ros::Publisher queued_pts_pub;
-    ros::Publisher corridor_pts_pub;
-    ros::Publisher debug_pts_pub;
-    ros::Publisher local_vel_pub;
+    ros::Publisher waypts_pub;
     ros::Publisher target_traj_pub;
+    ros::Publisher local_vel_pub;
+//    ros::Publisher corridor_pts_pub
 
     ros::Timer traj_gen_thread2;
 
@@ -82,15 +79,16 @@ class TrajectoryGeneratorWaypoint{
     double thermal_f_x, thermal_f_y, thermal_c_x, thermal_c_y, thermal_hfov, depth_max_range;
     double tof_f_x, tof_f_y, tof_c_x, tof_c_y, tof_hfov;
     double traj_gen_hz,traj_gen_hz2, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, predict_time=0.0;
-    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, last=0;
+    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, last=0, last_t = 0;
     double curr_vel_x, curr_vel_y, curr_vel_z, curr_x, curr_y, curr_z, curr_roll, curr_pitch, curr_yaw=0;
-    double k_pos, k_vel, k_ff=0;
+    double k_pos, k_vel, k_ff=0, k_yaw;
     double goal_x, goal_y, goal_z, goal_vx, goal_vy, goal_vz=0;
     std::string depth_topic, bbox_topic, body_base, fixed_frame;
 
     pcl::PointCloud<pcl::PointXYZ> debug_pts_pcl;
     geometry_msgs::PoseStamped drone_pose;
     nav_msgs::Odometry odom;
+
     sensor_msgs::Image depth;
     traj_gen::BoundingBoxes boxes;
     cv_bridge::CvImagePtr depth_ptr;
@@ -99,8 +97,9 @@ class TrajectoryGeneratorWaypoint{
     mavros_msgs::State current_state;
     ros::Subscriber state_sub;
     geometry_msgs::Twist velocity;
-    vector<pcl::PointXYZ> queued_pts, corridor_pts;
-    vector<VectorXd> queued_segments;
+    vector<pcl::PointXYZ> queued_pts, way_pts, corridor_pts;
+    vector<MatrixXd> queued_M1, queued_M2, queued_M3, accumulated_M1, accumulated_M2, accumulated_M3, accumulated_waypoint;
+    vector<VectorXd> queued_ts, accumulated_ts, way_pos, way_vel, drone_pos;
     vector<double> xx;
     vector<double> yy;
     vector<double> zz;
@@ -111,11 +110,11 @@ class TrajectoryGeneratorWaypoint{
     MatrixXd Acc = MatrixXd::Zero(3,2);
     MatrixXd Jerk = MatrixXd::Zero(3,2);
 
+    void odom_callback(const nav_msgs::Odometry::ConstPtr& msg);
+    void state_callback(const mavros_msgs::State::ConstPtr& msg);
     void depth_callback(const sensor_msgs::Image::ConstPtr& msg);
     void detect_callback(const traj_gen::BoundingBoxes::ConstPtr& msg2);
-    void odom_callback(const nav_msgs::Odometry::ConstPtr& msg);
     void drone_controller(const ros::TimerEvent& event);
-    void state_callback(const mavros_msgs::State::ConstPtr& msg);
     void dummy_controller();
 
     //Trajectory generator
@@ -126,7 +125,6 @@ class TrajectoryGeneratorWaypoint{
     VectorXd arrangeT(const Eigen::MatrixXd &waypts);
     VectorXd calc_tvec(const double t, const int n_order, const int r);
     MatrixXd getQ(const int n, const int r, const double t1, const double t2);
-//    MatrixXd getnewwaypts(const vector<double> &x_pts, const vector<double> &y_pts, const vector<double> &z_pts, const double r);
 
     // class constructor
     TrajectoryGeneratorWaypoint(ros::NodeHandle& n) : nh(n){
@@ -135,7 +133,6 @@ class TrajectoryGeneratorWaypoint{
         nh.param("/deep_debug", deep_debug, false);
         nh.param("/queuing_time", queuing_time, 1.0);
         nh.param("/point_numbers", point_numbers, 10);
-        nh.param("/traj_gen_hz", traj_gen_hz, 2.0);
         nh.param("/traj_gen_hz2", traj_gen_hz2, 3.333);
         nh.param("/min_dist", min_dist, 0.5);
         nh.param("/max_dist", max_dist, 2.5);
@@ -165,6 +162,7 @@ class TrajectoryGeneratorWaypoint{
         nh.param("/k_pos", k_pos, 0.4);
         nh.param("/k_vel", k_vel, 1.6);
         nh.param("/k_ff", k_ff, 0.01);
+        nh.param("/k_yaw", k_yaw, 0.5);
 
         nh.param<std::string>("/depth_topic_name", depth_topic, "/cubeeye/scube/depth_raw");
         nh.param<std::string>("/bbox_topic", bbox_topic, "/bboxes");
@@ -178,13 +176,11 @@ class TrajectoryGeneratorWaypoint{
 
         drone_traj_pub = nh.advertise<nav_msgs::Path>("/drone_traj", 10);
         head_pub = nh.advertise<visualization_msgs::Marker>( "/heading", 0 );
-
-        traj_pub = nh.advertise<nav_msgs::Path>("/traj", 10);
-        traj_pub2 = nh.advertise<nav_msgs::Path>("/traj_predict", 10);
+        queued_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/points", 10);
+        waypts_pub = nh.advertise<sensor_msgs::PointCloud2>("/waypts", 10);
+        target_traj_pub = nh.advertise<nav_msgs::Path>("/target_traj", 10);
         local_vel_pub = nh.advertise<geometry_msgs::Twist>("/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
 //        corridor_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/corridor", 10);
-        debug_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/debug_pts", 10);
-        queued_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/waypoints", 10);
         traj_gen_thread2 = nh.createTimer(ros::Duration(1/traj_gen_hz2), &TrajectoryGeneratorWaypoint::drone_controller, this);
 
         ROS_WARN("class heritated, starting node...");
@@ -388,6 +384,21 @@ void TrajectoryGeneratorWaypoint::drone_controller(const ros::TimerEvent& event)
               waypts(1,i)=yy[i];
               waypts(2,i)=zz[i];
           }
+          accumulated_waypoint.push_back(waypts);
+
+          //Visualize waypts
+          pcl::PointCloud<pcl::PointXYZ> temp_for_vis2;
+          for (int l=0; l<int(accumulated_waypoint.size()); l++){
+              MatrixXd temp_waypts(accumulated_waypoint[l]);
+              for(j=0; j<temp_waypts.cols();j++){
+                  pcl::PointXYZ ppp2;
+                  ppp2.x = temp_waypts(0,j);
+                  ppp2.y = temp_waypts(1,j);
+                  ppp2.z = temp_waypts(2,j);
+                  temp_for_vis2.push_back(ppp2);
+              }
+          }
+          waypts_pub.publish(cloud2msg(temp_for_vis2, fixed_frame));
 
           ts = arrangeT(waypts);
 
@@ -409,63 +420,58 @@ void TrajectoryGeneratorWaypoint::drone_controller(const ros::TimerEvent& event)
           M2 = PolyQPGeneration(yyy,ts,n_order,Vel.row(1),Acc.row(1),Jerk.row(1),corridor_r);
           M3 = PolyQPGeneration(zzz,ts,n_order,Vel.row(2),Acc.row(2),Jerk.row(2),corridor_r);
 
-//            //queue of the poly segment
-//            queued_segments.push_back(x_seg);
-//            queued_segments.push_back(y_seg);
-//            queued_segments.push_back(z_seg);
-//            if (int(queued_segments.size())> 3*(point_numbers-1)){
-//                queued_segments.erase(queued_segments.begin());
-//                queued_segments.erase(queued_segments.begin());
-//                queued_segments.erase(queued_segments.begin());
-//            }
+          queued_M1.push_back(M1); queued_M2.push_back(M2); queued_M3.push_back(M3); queued_ts.push_back(ts);
+          accumulated_M1.push_back(M1); accumulated_M2.push_back(M2); accumulated_M3.push_back(M3); accumulated_ts.push_back(ts);
+          if(debug){
+              ROS_WARN("Size of queued_M: %d, size of accumulated_M: %d", int(queued_M1.size()), int(accumulated_M1.size()));
+          }
+          if (int(queued_M1.size())>point_numbers/min_size){
+              queued_M1.erase(queued_M1.begin());
+              queued_M2.erase(queued_M2.begin());
+              queued_M3.erase(queued_M3.begin());
+              queued_ts.erase(queued_ts.begin());
+          }
+          for (int i=0; i<int(ts.size())-1; i++){
+              VectorXd pos = VectorXd::Zero(3);
+              VectorXd vel = VectorXd::Zero(3);
+              double t = ts(i);
+              pos(0) = M1(8*i+0)+M1(8*i+1)*t+M1(8*i+2)*pow(t,2)+M1(8*i+3)*pow(t,3)+M1(8*i+4)*pow(t,4)+M1(8*i+5)*pow(t,5)+M1(8*i+6)*pow(t,6)+M1(8*i+7)*pow(t,7);
+              pos(1) = M2(8*i+0)+M2(8*i+1)*t+M2(8*i+2)*pow(t,2)+M2(8*i+3)*pow(t,3)+M2(8*i+4)*pow(t,4)+M2(8*i+5)*pow(t,5)+M2(8*i+6)*pow(t,6)+M2(8*i+7)*pow(t,7);
+              pos(2) = M3(8*i+0)+M3(8*i+1)*t+M3(8*i+2)*pow(t,2)+M3(8*i+3)*pow(t,3)+M3(8*i+4)*pow(t,4)+M3(8*i+5)*pow(t,5)+M3(8*i+6)*pow(t,6)+M3(8*i+7)*pow(t,7);
+              vel(0) = M1(8*i+1)+M1(8*i+2)*2*pow(t,1)+M1(8*i+3)*3*pow(t,2)+M1(8*i+4)*4*pow(t,3)+M1(8*i+5)*5*pow(t,4)+M1(8*i+6)*6*pow(t,5)+M1(8*i+7)*7*pow(t,6);
+              vel(1) = M2(8*i+1)+M2(8*i+2)*2*pow(t,1)+M2(8*i+3)*3*pow(t,2)+M2(8*i+4)*4*pow(t,3)+M2(8*i+5)*5*pow(t,4)+M2(8*i+6)*6*pow(t,5)+M2(8*i+7)*7*pow(t,6);
+              vel(2) = M3(8*i+1)+M3(8*i+2)*2*pow(t,1)+M3(8*i+3)*3*pow(t,2)+M3(8*i+4)*4*pow(t,3)+M3(8*i+5)*5*pow(t,4)+M3(8*i+6)*6*pow(t,5)+M3(8*i+7)*7*pow(t,6);
+              way_pos.push_back(pos);
+              way_vel.push_back(vel);
+          }
+          last_t = ts(int(ts.size()-1));
+          if (int(way_pos.size())>point_numbers){
+              way_pos.erase(way_pos.begin());
+              way_vel.erase(way_vel.begin());
+          }
 
-          nav_msgs::Path generated_traj, generated_traj_predict;
-          generated_traj.header.stamp = ros::Time::now();
-          generated_traj_predict.header.stamp = ros::Time::now();
-          generated_traj.header.frame_id = fixed_frame;
-          generated_traj_predict.header.frame_id = fixed_frame;
-
-          for (int i=0; i<waypts.cols()-1; i++) {
-              for (double t=ts(i); t<ts(i+1); t+=0.05) {
-                geometry_msgs::PoseStamped temp;
-                temp.header.stamp = ros::Time::now();
-                temp.header.frame_id = fixed_frame;
-                temp.pose.position.x = M1(8*i+0)+M1(8*i+1)*t+M1(8*i+2)*pow(t,2)+M1(8*i+3)*pow(t,3)+M1(8*i+4)*pow(t,4)+M1(8*i+5)*pow(t,5)+M1(8*i+6)*pow(t,6)+M1(8*i+7)*pow(t,7);
-                temp.pose.position.y = M2(8*i+0)+M2(8*i+1)*t+M2(8*i+2)*pow(t,2)+M2(8*i+3)*pow(t,3)+M2(8*i+4)*pow(t,4)+M2(8*i+5)*pow(t,5)+M2(8*i+6)*pow(t,6)+M2(8*i+7)*pow(t,7);
-                temp.pose.position.z = M3(8*i+0)+M3(8*i+1)*t+M3(8*i+2)*pow(t,2)+M3(8*i+3)*pow(t,3)+M3(8*i+4)*pow(t,4)+M3(8*i+5)*pow(t,5)+M3(8*i+6)*pow(t,6)+M3(8*i+7)*pow(t,7);
-                temp.pose.orientation.w = 1.0;
-
-                generated_traj.poses.push_back(temp);
-              }
-              //predict
-              if (i == waypts.cols()-2){
-                  for (double t=ts(i+1); t<ts(i+1)+predict_time; t+=0.05) {
+          nav_msgs::Path target_traj;
+          target_traj.header.stamp = ros::Time::now();
+          target_traj.header.frame_id = fixed_frame;
+          for (int i=0 ; i<int(accumulated_M1.size()); i++){
+              VectorXd temp_M1(accumulated_M1[i]); VectorXd temp_M2(accumulated_M2[i]); VectorXd temp_M3(accumulated_M3[i]); VectorXd temp_ts(accumulated_ts[i]);
+              for(int j=0 ; j<int(temp_ts.size())-1; j++){
+                  for (double t=temp_ts(j); t<temp_ts(j+1); t+=0.05) {
                       geometry_msgs::PoseStamped temp;
                       temp.header.stamp = ros::Time::now();
-                      temp.header.frame_id =fixed_frame;
-                      temp.pose.position.x = M1(8*i+0)+M1(8*i+1)*t+M1(8*i+2)*pow(t,2)+M1(8*i+3)*pow(t,3)+M1(8*i+4)*pow(t,4)+M1(8*i+5)*pow(t,5)+M1(8*i+6)*pow(t,6)+M1(8*i+7)*pow(t,7);
-                      temp.pose.position.y = M2(8*i+0)+M2(8*i+1)*t+M2(8*i+2)*pow(t,2)+M2(8*i+3)*pow(t,3)+M2(8*i+4)*pow(t,4)+M2(8*i+5)*pow(t,5)+M2(8*i+6)*pow(t,6)+M2(8*i+7)*pow(t,7);
-                      temp.pose.position.z = M3(8*i+0)+M3(8*i+1)*t+M3(8*i+2)*pow(t,2)+M3(8*i+3)*pow(t,3)+M3(8*i+4)*pow(t,4)+M3(8*i+5)*pow(t,5)+M3(8*i+6)*pow(t,6)+M3(8*i+7)*pow(t,7);
-                      temp.pose.orientation.w = 1.0;
-
-                      generated_traj_predict.poses.push_back(temp);
+                      temp.header.frame_id = fixed_frame;
+                      temp.pose.position.x = temp_M1(8*j+0)+temp_M1(8*j+1)*t+temp_M1(8*j+2)*pow(t,2)+temp_M1(8*j+3)*pow(t,3)+temp_M1(8*j+4)*pow(t,4)+temp_M1(8*j+5)*pow(t,5)+temp_M1(8*j+6)*pow(t,6)+temp_M1(8*j+7)*pow(t,7);
+                      temp.pose.position.y = temp_M2(8*j+0)+temp_M2(8*j+1)*t+temp_M2(8*j+2)*pow(t,2)+temp_M2(8*j+3)*pow(t,3)+temp_M2(8*j+4)*pow(t,4)+temp_M2(8*j+5)*pow(t,5)+temp_M2(8*j+6)*pow(t,6)+temp_M2(8*j+7)*pow(t,7);
+                      temp.pose.position.z = temp_M3(8*j+0)+temp_M3(8*j+1)*t+temp_M3(8*j+2)*pow(t,2)+temp_M3(8*j+3)*pow(t,3)+temp_M3(8*j+4)*pow(t,4)+temp_M3(8*j+5)*pow(t,5)+temp_M3(8*j+6)*pow(t,6)+temp_M3(8*j+7)*pow(t,7);
+                      target_traj.poses.push_back(temp);
                   }
               }
-//              //Generate corridor
-//              pcl::PointXYZ cppp;
-//              cppp.x = waypts(0,i); cppp.y = waypts(1,i); cppp.z = waypts(2,i);
-//              corridor_pts.push_back(cppp);
-//              pcl::PointCloud<pcl::PointXYZ> temp_vis;
-//              for (int l=0; l<int(corridor_pts.size()); l++){
-//                  temp_vis.push_back(corridor_pts[l]);
-//              }
-//              corridor_pts_pub.publish(cloud2msg(temp_vis, fixed_frame));
           }
-          traj_pub.publish(generated_traj);
-          traj_pub2.publish(generated_traj_predict);
-
+          target_traj_pub.publish(target_traj);
+          last=count2;
           traj_gen_check=true;
       }
+      xx.clear(); yy.clear(); zz.clear();
     }
     //controller
     if(traj_gen_check){ //if(current_state.connected && current_state.armed && current_state.mode=="OFFBOARD" && traj_gen_check){
