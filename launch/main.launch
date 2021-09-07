@@ -17,7 +17,7 @@
   <param name="/v_max" value="5.0"/>
   <param name="/a_max" value="10.0"/>
   <param name="/n_order" value="7"/>
-  <param name="/min_size" value="2"/>
+  <param name="/min_size" value="1"/>
   <param name="/predict_time" value="1.0"/>
   <param name="/rand_coeff" value="0.8"/>
 

@@ -62,10 +62,11 @@ class Simulator{
 
     bool detect_check=false, depth_check=false, drone_pose_check_first=false, drone_pose_check=false, debug=false, deep_debug=false, traj_gen_check=false;
     double traj_gen_hz,traj_gen_hz2, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, predict_time=0.0;
-    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0;
+    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0, count3=0;
     double curr_vel_x, curr_vel_y, curr_vel_z, curr_x, curr_y, curr_z, curr_roll, curr_pitch, curr_yaw=0;
     double k_pos, k_vel, k_ff=0, k_yaw, rand_coeff;
     double goal_x, goal_y, goal_z, goal_vx, goal_vy, goal_vz=0;
+    const double PI = 3.1415926;
     std::string depth_topic, bbox_topic, body_base, fixed_frame;
 
     geometry_msgs::PoseStamped drone_pose;
@@ -157,9 +158,9 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     VectorXd pos = VectorXd::Zero(3);
     pos(0)=curr_x; pos(1)=curr_y; pos(2)=curr_z;
     drone_pos.push_back(pos);
-    if (int(drone_pos.size())>100){
-        drone_pos.erase(drone_pos.begin());
-    }
+//    if (int(drone_pos.size())>100){
+//        drone_pos.erase(drone_pos.begin());
+//    }
     nav_msgs::Path drone_traj;
     drone_traj.header.stamp = ros::Time::now();
     drone_traj.header.frame_id = fixed_frame;
@@ -200,8 +201,42 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
 void Simulator::drone_controller(const ros::TimerEvent& event){
 
     //Generate point
-    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
-    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
+//    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
+//    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
+
+//    //For visualization target movement generate 1) almost square
+//    if(count3<30){
+//        world_detected_point(0)=Random(count3/30*8+2-0.1,count3/30*8+2+0.1);
+//        world_detected_point(1)=Random(-0.1,0.1);
+//    }
+//    else if(count3<60){
+//        world_detected_point(0)=Random(10-0.1,10+0.1);
+//        world_detected_point(1)=Random((count3-30)/3-0.1,(count3-30)/3+0.1);
+//    }
+//    else if(count3<120){
+//        world_detected_point(0)=Random((90-count3)/3-0.1,(90-count3)/3+0.1);
+//        world_detected_point(1)=Random(10-0.1,10+0.1);
+//    }
+//    else if(count3<180){
+//        world_detected_point(0)=Random(-10-0.1,-10+0.1);
+//        world_detected_point(1)=Random((150-count3)/3-0.1,(150-count3)/3+0.1);
+//    }
+//    else if(count3<240){
+//        world_detected_point(0)=Random((count3-210)/3-0.1,(count3-210)/3+0.1);
+//        world_detected_point(1)=Random(-10-0.1,-10+0.1);
+//    }
+//    else if(count3<270){
+//        world_detected_point(0)=Random(10-0.1,10+0.1);
+//        world_detected_point(1)=Random((count3-270)/3-0.1,(count3-270)/3+0.1);
+//    }
+//    count3++;
+
+    //For visualization target movement generate 2) almost circle
+
+    world_detected_point(0)=10*cos(PI/120*(count3));
+    world_detected_point(1)=10*sin(PI/120*(count3));
+    count3++;
+
     world_detected_point(2)=Random(1.7, 1.8);
 
     auto duration = duration_cast<microseconds>(high_resolution_clock::now() - start);
@@ -304,8 +339,8 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             nav_msgs::Path target_traj;
             target_traj.header.stamp = ros::Time::now();
             target_traj.header.frame_id = fixed_frame;
-            for (int i=0 ; i<int(queued_M1.size()); i++){
-                VectorXd temp_M1(queued_M1[i]); VectorXd temp_M2(queued_M2[i]); VectorXd temp_M3(queued_M3[i]); VectorXd temp_ts(queued_ts[i]);
+            for (int i=0 ; i<int(accumulated_M1.size()); i++){
+                VectorXd temp_M1(accumulated_M1[i]); VectorXd temp_M2(accumulated_M2[i]); VectorXd temp_M3(accumulated_M3[i]); VectorXd temp_ts(accumulated_ts[i]);
                 for(int j=0 ; j<int(temp_ts.size())-1; j++){
                     for (double t=temp_ts(j); t<temp_ts(j+1); t+=0.05) {
                         geometry_msgs::PoseStamped temp;
@@ -381,7 +416,14 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         velocity.linear.z = uz;
         velocity.angular.x = 0.0;
         velocity.angular.y = 0.0;
-        velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
+//        Case when desired_yaw: pi -> -pi suddenly(drone turn)
+        if(abs(desired_yaw-curr_yaw)>abs(desired_yaw+curr_yaw)){
+            velocity.angular.z = k_yaw*(desired_yaw+curr_yaw);
+        }
+        else{
+            velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
+        }
+
 
         if(debug){
             ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
