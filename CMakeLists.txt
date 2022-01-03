@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(simulation)
+project(2021_winter)
 
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-std=c++14")#-DEIGEN_USE_MKL_ALL")
@@ -55,8 +55,8 @@ catkin_package(
 )
 
 
-add_executable(simulation_1 src/simulation.cpp)
-target_link_libraries(simulation_1 ${catkin_LIBRARIES} ${EIGEN3_LIBS} OsqpEigen::OsqpEigen) 
+add_executable(simulation_nmpc src/main.cpp)
+target_link_libraries(simulation_nmpc ${catkin_LIBRARIES} ${EIGEN3_LIBS} OsqpEigen::OsqpEigen)
 
 #add_executable(simulation_2 src/main2.cpp)
 #target_link_libraries(simulation_2 ${catkin_LIBRARIES} ${EIGEN3_LIBS} OsqpEigen::OsqpEigen)

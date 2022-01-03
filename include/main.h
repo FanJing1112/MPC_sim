@@ -8,7 +8,7 @@
 #include <iostream>
 #include <math.h>
 #include <vector>
-#include "omp.h"
+
 
 //// PCL
 #include <pcl/point_types.h>
@@ -54,18 +54,18 @@ class Simulator{
     ros::Subscriber detect_sub;
     ros::Subscriber odom_sub;
     ros::Publisher local_vel_pub;
-    ros::Timer traj_gen_thread2;
+    ros::Timer thread;
     ros::Publisher drone_traj_pub;
     ros::Publisher target_traj_pub;
+    ros::Publisher mpc_check_pub;
     ros::Publisher waypts_pub;
-//    ros::Publisher debug_pts_pub;
     ros::Publisher head_pub;
 
     bool detect_check=false, depth_check=false, drone_pose_check_first=false, drone_pose_check=false, debug=false, deep_debug=false, traj_gen_check=false;
-    double traj_gen_hz,traj_gen_hz2, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, predict_time=0.0;
-    int bbox_width=0, bbox_center_y =0; int bbox_center_x=0; int bbox_length=0; int count = 0, point_numbers = 0, n_order = 0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0, count3=0;
+    double traj_gen_hz, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, time_allocation, predict_time=0.0;
+    int test, count = 0, C_coeff1, point_numbers = 0, n_order = 0, N=0, min_size = 0, close_i=0, count2 = 0, last=0, last_t = 0, count3=0, sim_type=1;
     double curr_vel_x, curr_vel_y, curr_vel_z, curr_x, curr_y, curr_z, curr_roll, curr_pitch, curr_yaw=0;
-    double k_pos, k_vel, k_ff=0, k_yaw, rand_coeff;
+    double k_yaw, rand_coeff, C_coeff2;
     double goal_x, goal_y, goal_z, goal_vx, goal_vy, goal_vz=0;
     const double PI = 3.1415926;
     std::string depth_topic, bbox_topic, body_base, fixed_frame;
@@ -96,6 +96,7 @@ class Simulator{
     //Trajectory generator
     MatrixXd PolyQPGeneration(const Eigen::MatrixXd &waypts, const Eigen::VectorXd &Time, const int n_order,
                                      const Eigen::MatrixXd &Vel, const Eigen::MatrixXd &Acc, const Eigen::MatrixXd &Jerk, const double Corridor_r);
+    MatrixXd MPC(const Eigen::MatrixXd &x_start, const Eigen::MatrixXd &ref_traj, const Eigen::MatrixXd &u_start, const double dt,const int N);
 
     int Factorial(int x);
     VectorXd arrangeT(const Eigen::MatrixXd &waypts);
@@ -108,20 +109,21 @@ class Simulator{
         nh.param("/deep_debug", deep_debug, false);
         nh.param("/queuing_time", queuing_time, 1.0);
         nh.param("/point_numbers", point_numbers, 10);
-        nh.param("/traj_gen_hz2", traj_gen_hz2, 3.333);
+        nh.param("/traj_gen_hz", traj_gen_hz, 3.333);
         nh.param("/min_dist", min_dist, 0.5);
+        nh.param("/C_coeff1", C_coeff1, 1);
+        nh.param("/C_coeff2", C_coeff2, 0.1);
         nh.param("/max_dist", max_dist, 2.5);
         nh.param("/corridor_r", corridor_r, 0.5);
+        nh.param("/time_allocation", time_allocation, 1.5);
         nh.param("/v_max", v_max, 5.0);
+        nh.param("/sim_type", sim_type, 1);
         nh.param("/a_max", a_max, 10.0);
         nh.param("/n_order", n_order, 7);
         nh.param("/min_size", min_size, 2);
         nh.param("/predict_time", predict_time, 1.0);
         nh.param("/rand_coeff", rand_coeff, 1.0);
 
-        nh.param("/k_pos", k_pos, 0.8);
-        nh.param("/k_vel", k_vel, 1.2);
-        nh.param("/k_ff", k_ff, 0.01);
         nh.param("/k_yaw", k_yaw, 0.5);
 
 
@@ -130,12 +132,11 @@ class Simulator{
         odom_sub = nh.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 100, &Simulator::odom_callback, this);
         drone_traj_pub = nh.advertise<nav_msgs::Path>("/drone_traj", 10);
         target_traj_pub = nh.advertise<nav_msgs::Path>("/target_traj", 10);
-//        waypts_pub = nh.advertise<sensor_msgs::PointCloud2>("/waypts", 10);
+        mpc_check_pub = nh.advertise<nav_msgs::Path>("/mpc_predict", 10);
         waypts_pub = nh.advertise<visualization_msgs::MarkerArray>("/waypts", 10);
-//        debug_pts_pub = nh.advertise<sensor_msgs::PointCloud2>("/debug_pts", 10);
         local_vel_pub = nh.advertise<geometry_msgs::Twist>("/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
         head_pub = nh.advertise<visualization_msgs::Marker>( "/heading", 0 );
-        traj_gen_thread2 = nh.createTimer(ros::Duration(1/traj_gen_hz2), &Simulator::drone_controller, this);
+        thread = nh.createTimer(ros::Duration(1/traj_gen_hz), &Simulator::drone_controller, this);
 
         ROS_WARN("class heritated, starting node...");
         tic();
@@ -175,7 +176,7 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     }
     drone_traj_pub.publish(drone_traj);
 
-    //visualize camera angle
+    //visualize UAV
     visualization_msgs::Marker heading_vector;
     heading_vector.header.stamp = ros::Time::now();
     heading_vector.header.frame_id = fixed_frame;
@@ -186,7 +187,6 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     heading_vector.scale.x = 0.1;
     heading_vector.scale.y = 0.2;
     heading_vector.type = visualization_msgs::Marker::ARROW;
-
     geometry_msgs::Point start_p, end_p;
     start_p.x = curr_x;
     start_p.y = curr_y;
@@ -203,17 +203,33 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
 void Simulator::drone_controller(const ros::TimerEvent& event){
 
     //Generate point
-    //Real random
-    world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/2, world_detected_point(0)+rand_coeff);
-    world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/2, world_detected_point(1)+rand_coeff);
+    //rand need change
+    if(sim_type == 1){
+      world_detected_point(0)= Random(world_detected_point(0)-rand_coeff/3, world_detected_point(0)+rand_coeff);
+      world_detected_point(1)=Random(world_detected_point(1)-rand_coeff/3, world_detected_point(1)+rand_coeff);
+      world_detected_point(2)=Random(1.7, 1.8);
+    }
+    //Small fast circular
+    if(sim_type == 2){
+      world_detected_point(0)=5*(cos(PI/80*(count3))-1);
+      world_detected_point(1)=5*sin(PI/80*(count3));
+      world_detected_point(2)=1.5+count3/30;
+    }
+    //S shape
+    if(sim_type == 3){
+      world_detected_point(0)=Random(10*sin(PI/100*(count3))-rand_coeff/66,10*sin(PI/100*(count3))+rand_coeff/66);
+      world_detected_point(1)=Random(count3/10-rand_coeff/66,count3/10+rand_coeff/66);
+      world_detected_point(2)=Random(1.7, 1.8);
+    }
+    //Large, slow circular
+    if(sim_type == 4){
+      world_detected_point(0)=10*(cos(PI/120*(count3))-1);
+      world_detected_point(1)=10*sin(PI/120*(count3));
+      world_detected_point(2)=1.5+count3/60;
+    }
+    count3=count3+3;
 
-    //For visualization target movement generate 2) almost circle
 
-//    world_detected_point(0)=Random(10*cos(PI/120*(count3))-rand_coeff/6, 10*cos(PI/120*(count3))+rand_coeff/6);
-//    world_detected_point(1)=Random(10*sin(PI/120*(count3))-rand_coeff/6, 10*sin(PI/120*(count3))+rand_coeff/6);
-    count3++;
-
-    world_detected_point(2)=Random(1.7, 1.8);
 
     auto duration = duration_cast<microseconds>(high_resolution_clock::now() - start);
     if(duration.count()/1000000.0 > queuing_time){
@@ -249,7 +265,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             int k=0;
 
             //Visualize waypts
-            //I don't know why, but cloud2msg cannot work. So instantly use markerarray
             visualization_msgs::MarkerArray waypoints;
             for (int i=0; i<int(accumulated_waypoint.size()); i++) {
                 MatrixXd temp_waypts = accumulated_waypoint[i];
@@ -269,7 +284,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
                     waypts.color.a = 1.0;
                     waypts.color.r = 0.5;
                     k++;
-
                     waypoints.markers.push_back(waypts);
                 }
             }
@@ -297,7 +311,7 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             queued_M1.push_back(M1); queued_M2.push_back(M2); queued_M3.push_back(M3); queued_ts.push_back(ts);
             accumulated_M1.push_back(M1); accumulated_M2.push_back(M2); accumulated_M3.push_back(M3); accumulated_ts.push_back(ts);
             if(debug){
-                ROS_WARN("Size of queued_M: %d, size of accumulated_M: %d", int(queued_M1.size()), int(accumulated_M1.size()));
+              ROS_WARN("Size of queued_M: %d, size of accumulated_M: %d", int(queued_M1.size()), int(accumulated_M1.size()));
             }
             if (int(queued_M1.size())>point_numbers/min_size){
                 queued_M1.erase(queued_M1.begin());
@@ -323,17 +337,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
                 way_pos.erase(way_pos.begin());
                 way_vel.erase(way_vel.begin());
             }
-//            //visualize waypts
-//            for(int i=0 ; i<int(way_pos.size()); i++){
-//                pcl::PointXYZ ppp;
-//                ppp.x = waypts(0,i); ppp.y = waypts(1,i); ppp.z = waypts(2,i);
-//                way_pts.push_back(ppp);
-//            }
-//            pcl::PointCloud<pcl::PointXYZ> temp_vis;
-//            for (int l=0; l<int(way_pts.size()); l++){
-//                temp_vis.push_back(way_pts[l]);
-//            }
-//            waypts_pub.publish(cloud2msg(temp_vis, fixed_frame));
 
             //visualize target traj
             nav_msgs::Path target_traj;
@@ -361,8 +364,9 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         xx.clear(); yy.clear(); zz.clear();
     }
 
-//    Control
+//    UAV Control
     if(traj_gen_check){
+        double dt = 1/traj_gen_hz;
         ROS_INFO("Tracking start");
         //For controller
         VectorXd temp_pos(way_pos[0]), temp_vel(way_vel[0]);
@@ -371,62 +375,83 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
             VectorXd temp_pos(way_pos[i]), temp_vel(way_vel[i]);
             if (euclidean_dist(temp_pos(0), temp_pos(1), temp_pos(2), curr_x, curr_y, curr_z)<distance){
                 distance = euclidean_dist(temp_pos(0), temp_pos(1), temp_pos(2), curr_x, curr_y, curr_z);
-                close_i = i;
+                if (i>close_i-1){
+                    close_i = i;
+                }
+                else if (i == int(way_pos.size())-1){
+                    close_i = i;
+                }
             }
         }
-        double t;
-        int i=0;
+        N = int(way_pos.size())-close_i;
+        MatrixXd curr_pos(3,1);
+        curr_pos << curr_x, curr_y, curr_z;
+        MatrixXd u_start(3,1);
+        u_start << curr_vel_x, curr_vel_y, curr_vel_z;
+        MatrixXd ref_pts(3,N);
+//        for (int i=close_i ; i<int(way_pos.size()); i++){
+        for (int i=0 ; i<N; i++){
+            VectorXd temp2_pos(way_pos[i+close_i]);
+            ref_pts(0,i) = temp2_pos(0);
+            ref_pts(1,i) = temp2_pos(1);
+            ref_pts(2,i) = temp2_pos(2);
+        }
+        MatrixXd u(3,1);
+//        cout<<N<<endl;
+//        cout<<ref_pts<<endl;
+        ROS_INFO("ref_first=(%.1f, %.1f, %.1f) close i =%d", ref_pts(0,0), ref_pts(1,0), ref_pts(2,0), close_i);
+        u = MPC(curr_pos, ref_pts, u_start, dt, N);
+
+        double ux = u(0,0);
+        double uy = u(1,0);
+        double uz = u(2,0);
+
+        nav_msgs::Path mpc_traj;
+        mpc_traj.header.stamp = ros::Time::now();
+        mpc_traj.header.frame_id = fixed_frame;
+        float x2=curr_x,y2=curr_y,z2=curr_z;
+        for (int i=0 ; i<int(u.size()); i=i+3){
+            geometry_msgs::PoseStamped temp;
+            temp.header.stamp = ros::Time::now();
+            temp.header.frame_id = fixed_frame;
+            x2 = x2+dt*u(i,0);
+            y2 = y2+dt*u(i+1,0);
+            z2 = z2+dt*u(i+2,0);
+            temp.pose.position.x = x2;
+            temp.pose.position.y = y2;
+            temp.pose.position.z = z2;
+            mpc_traj.poses.push_back(temp);
+        }
+        mpc_check_pub.publish(mpc_traj);
+        double desired_yaw = 0.0;
         if (close_i == int(way_pos.size())-1){
-            //control in predict traj
-            t=last_t+predict_time/2;
-            //final value
-            i=M1.size()/8-1;
+            double t=last_t+predict_time/2;
+            int i=M1.size()/8-1;
             MatrixXd M1(queued_M1[int(queued_M1.size())-1]); MatrixXd M2(queued_M2[int(queued_M1.size())-1]); MatrixXd M3(queued_M3[int(queued_M1.size())-1]);
 
-            goal_x = M1(8*i+0)+M1(8*i+1)*t+M1(8*i+2)*pow(t,2)+M1(8*i+3)*pow(t,3)+M1(8*i+4)*pow(t,4)+M1(8*i+5)*pow(t,5)+M1(8*i+6)*pow(t,6)+M1(8*i+7)*pow(t,7);
-            goal_y = M2(8*i+0)+M2(8*i+1)*t+M2(8*i+2)*pow(t,2)+M2(8*i+3)*pow(t,3)+M2(8*i+4)*pow(t,4)+M2(8*i+5)*pow(t,5)+M2(8*i+6)*pow(t,6)+M2(8*i+7)*pow(t,7);
-            goal_z = M3(8*i+0)+M3(8*i+1)*t+M3(8*i+2)*pow(t,2)+M3(8*i+3)*pow(t,3)+M3(8*i+4)*pow(t,4)+M3(8*i+5)*pow(t,5)+M3(8*i+6)*pow(t,6)+M3(8*i+7)*pow(t,7);
-            goal_vx = M1(8*i+1)+M1(8*i+2)*2*pow(t,1)+M1(8*i+3)*3*pow(t,2)+M1(8*i+4)*4*pow(t,3)+M1(8*i+5)*5*pow(t,4)+M1(8*i+6)*6*pow(t,5)+M1(8*i+7)*7*pow(t,6);
-            goal_vy = M2(8*i+1)+M2(8*i+2)*2*pow(t,1)+M2(8*i+3)*3*pow(t,2)+M2(8*i+4)*4*pow(t,3)+M2(8*i+5)*5*pow(t,4)+M2(8*i+6)*6*pow(t,5)+M2(8*i+7)*7*pow(t,6);
-            goal_vz = M3(8*i+1)+M3(8*i+2)*2*pow(t,1)+M3(8*i+3)*3*pow(t,2)+M3(8*i+4)*4*pow(t,3)+M3(8*i+5)*5*pow(t,4)+M3(8*i+6)*6*pow(t,5)+M3(8*i+7)*7*pow(t,6);
+            double goal_x = M1(8*i+0)+M1(8*i+1)*t+M1(8*i+2)*pow(t,2)+M1(8*i+3)*pow(t,3)+M1(8*i+4)*pow(t,4)+M1(8*i+5)*pow(t,5)+M1(8*i+6)*pow(t,6)+M1(8*i+7)*pow(t,7);
+            double goal_y = M2(8*i+0)+M2(8*i+1)*t+M2(8*i+2)*pow(t,2)+M2(8*i+3)*pow(t,3)+M2(8*i+4)*pow(t,4)+M2(8*i+5)*pow(t,5)+M2(8*i+6)*pow(t,6)+M2(8*i+7)*pow(t,7);
+//            desired_yaw = atan2(goal_y-curr_y, goal_x-curr_x);
         }
         else{
-          //control in current traj
-          if(close_i == int(way_pos.size())-2) i = close_i+1;
-          else i = close_i+2;
-            goal_x=way_pos[i](0); goal_y=way_pos[i](1), goal_z=way_pos[i](2);
-            goal_vx=way_vel[i](0), goal_vy=way_vel[i](1), goal_vz=way_vel[i](2);
+//            desired_yaw = atan2(way_pos[int(way_pos.size())-1](1)-curr_y, way_pos[int(way_pos.size())-1](0)-curr_x);
         }
-
-        double x_pos_err = (goal_x - curr_x);
-        double y_pos_err = (goal_y - curr_y);
-        double z_pos_err = (1.8 - curr_z);
-        double x_vel_err = (goal_vx - curr_vel_x);
-        double y_vel_err = (goal_vy - curr_vel_y);
-        double z_vel_err = (0.0 - curr_vel_z);
-
-        double ux = k_pos*x_pos_err + k_vel*x_vel_err + k_ff*goal_vx;
-        double uy = k_pos*y_pos_err + k_vel*y_vel_err + k_ff*goal_vy;
-        double uz = k_pos*z_pos_err + k_vel*z_vel_err;
-
-//        double desired_yaw = atan2(uy,ux);
-        double desired_yaw = atan2(way_pos[int(way_pos.size())-1](1)-curr_y, way_pos[int(way_pos.size())-1](0)-curr_x);
+        desired_yaw = atan2(u(1,0),u(0,0));
         velocity.linear.x = ux;
         velocity.linear.y = uy;
         velocity.linear.z = uz;
         velocity.angular.x = 0.0;
         velocity.angular.y = 0.0;
-//        Case when desired_yaw: pi -> -pi suddenly(drone turn)
         if(abs(desired_yaw-curr_yaw)>abs(desired_yaw+curr_yaw)){
             velocity.angular.z = k_yaw*(desired_yaw+curr_yaw);
         }
         else{
             velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
         }
-
-
         if(debug){
             ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
+//              ROS_INFO("d_v: (%.1f, %.1f, %.1f) c_v: (%.1f, %.1f, %.1f)", ux, uy, uz, curr_vel_x, curr_vel_y,curr_vel_z);
+//              ROS_INFO("roll: %.1f, pitch: %.1f, yaw: %.1f", curr_roll, curr_pitch, curr_yaw);
         }
         local_vel_pub.publish(velocity);
         ros::spinOnce();
@@ -446,13 +471,109 @@ void Simulator::dummy_controller(){
     local_vel_pub.publish(velocity);
 }
 
+MatrixXd Simulator::MPC(const Eigen::MatrixXd &x_start,
+                        const Eigen::MatrixXd &ref_traj,
+                        const Eigen::MatrixXd &u_start,
+                        const double dt,
+                        const int N){
+//  p=position x,y,z
+//  u=velocity x,y,z control
+    int dim = 3;
+
+//    Cost function
+    SparseMatrix<double> Q(dim*N,dim*N);
+    VectorXd C=VectorXd::Zero(dim*N);
+    MatrixXd B_bar=MatrixXd::Zero(dim,N*dim);
+    MatrixXd F(dim,1);
+    MatrixXd D=MatrixXd::Zero(dim*N,1);
+    for (int j=0; j<dim; j++){
+        D(j,0)=u_start(j);
+    }
+    MatrixXd A_bar=MatrixXd::Zero(N*dim,N*dim);
+    for (int i=0; i<N; i++){
+        for (int l=0; l<dim; l++){
+            A_bar(dim*i+l,dim*i+l)=-1;
+            if (i>0){
+                A_bar(dim*i+l,dim*(i-1)+l)=1;
+            }
+            B_bar(l,dim*i+l)=dt;
+            F(l,0)=ref_traj(l,i)-x_start(l,0);
+        }
+        //Position distance
+        if (C_coeff1 == 1){
+            Q = Q + (N-i)*B_bar.transpose()*B_bar;
+            C = C - (N-i)*VectorXd(B_bar.transpose()*F);
+        }
+        if (C_coeff1 == 2){
+            Q = Q + pow((N-i),2)*B_bar.transpose()*B_bar;
+            C = C - pow((N-i),2)*VectorXd(B_bar.transpose()*F);
+        }
+        //Best
+        if (C_coeff1 == 3){
+            Q = Q + B_bar.transpose()*B_bar;
+            C = C - VectorXd(B_bar.transpose()*F);
+        }
+        if (C_coeff1 == 4){
+            Q = Q + (i+1)*B_bar.transpose()*B_bar;
+            C = C - (i+1)*VectorXd(B_bar.transpose()*F);
+        }
+        if (C_coeff1 == 5){
+            Q = Q + pow((i+1),2)*B_bar.transpose()*B_bar;
+            C = C - pow((i+1),2)*VectorXd(B_bar.transpose()*F);
+        }
+    }
+    //Input difference
+    Q = Q + C_coeff2*A_bar.transpose()*A_bar;
+    C = C + C_coeff2*VectorXd(A_bar.transpose()*D);
+
+//    For constraint
+    SparseMatrix<double> L(dim*N,dim*N);
+    VectorXd u = VectorXd::Zero(dim*N);
+    VectorXd l = VectorXd::Zero(dim*N);
+    //    Velocity constraints
+    for (int i = 0; i < dim*N ; i++){
+        L.insert(i,i)=1;
+        u(i)=v_max;
+        l(i)=-v_max;
+    }
+
+    OsqpEigen::Solver mpcsolver;
+    //settings
+    mpcsolver.settings()->setWarmStart(true);
+    //Set initial data of the QP solver
+    mpcsolver.data()->setNumberOfVariables(dim*N);
+    mpcsolver.data()->setNumberOfConstraints(dim*N);
+
+    if(!mpcsolver.data()->setHessianMatrix(Q)) return D;
+
+    if(!mpcsolver.data()->setGradient(C)) return D;
+
+    if(!mpcsolver.data()->setLinearConstraintsMatrix(L)) return D;
+
+    if(!mpcsolver.data()->setLowerBound(l)) return D;
+
+    if(!mpcsolver.data()->setUpperBound(u)) return D;
+
+    //Initiate the solver
+    if(!mpcsolver.initSolver()) return D;
+
+    if(!mpcsolver.solve()){
+      ROS_WARN("!!!!");
+      return D;
+    }
+
+    VectorXd x = mpcsolver.getSolution();
+
+    return x;
+}
+
 MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
-                                                              const Eigen::VectorXd &ts,
-                                                              const int n_order,
-                                                              const Eigen::MatrixXd &Vel,
-                                                              const Eigen::MatrixXd &Acc,
-                                                              const Eigen::MatrixXd &Jerk,
-                                                              const double Corridor_r){
+                                     const Eigen::VectorXd &ts,
+                                     const int n_order,
+                                     const Eigen::MatrixXd &Vel,
+                                     const Eigen::MatrixXd &Acc,
+                                     const Eigen::MatrixXd &Jerk,
+                                     const double Corridor_r){
     //Number of Polynomials
     int n_poly = waypts.cols()-1;
     //Number of Coefficient in each polynomial
@@ -479,14 +600,14 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
     VectorXd b_upper = VectorXd::Zero(7*n_poly+4);
     /*--------------------Equality Constraint---------------------*/
     //Start,End Constraint(p, v, a, j)(8 equation)
-    #pragma omp parallel
+
     for (int i = 0; i < n_coef; i++){
         A.insert(0,i) = calc_tvec(ts(0),n_order,0)(i); b_lower(0) = waypts(0,0); b_upper(0) = waypts(0,0);
         A.insert(1,i) = calc_tvec(ts(0),n_order,1)(i); b_lower(1) = Vel(0); b_upper(1) = Vel(0);
         A.insert(2,i) = calc_tvec(ts(0),n_order,2)(i); b_lower(2) = Acc(0); b_upper(2) = Acc(0);
         A.insert(3,i) = calc_tvec(ts(0),n_order,3)(i); b_lower(3) = Jerk(0); b_upper(3) = Jerk(0);
     }
-    #pragma omp parallel
+
     for (int i = n_coef*(n_poly-1); i < n_coef*n_poly; i++){
         A.insert(4,i) = calc_tvec(ts(n_poly),n_order,0)(i-n_coef*(n_poly-1)); b_lower(4) = waypts(n_poly); b_upper(4) = waypts(n_poly);
         A.insert(5,i) = calc_tvec(ts(n_poly),n_order,1)(i-n_coef*(n_poly-1)); b_lower(5) = Vel(1); b_upper(5) = Vel(1);
@@ -495,9 +616,7 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
     }
     int neq=8;
     //Continuous Constraint(point, velocity, acceleration, jerk)(4*(n_poly-1) equations)
-    #pragma omp parallel
     for (int i = 1; i < n_poly ; i++){
-        #pragma omp parallel
         for (int j = 0 ; j < n_coef; j++){
             A.insert(neq,n_coef*(i-1)+j) = calc_tvec(ts(i),n_order,0)(j);
             A.insert(neq,n_coef*i+j) = -calc_tvec(ts(i),n_order,0)(j);
@@ -511,16 +630,13 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
         neq=neq+4;
     }
     /*-----------------Inequality Constraint----------------------*/
-    #pragma omp parallel
     for (int i = 0; i < n_poly; i++){
         //Corridor constraints(n_poly equation)
-        #pragma omp parallel
         for (int j = 0; j < n_coef; j++){
             A.insert(4*n_poly+4+i,n_coef*i+j) = calc_tvec(ts(i),n_order,0)(j);
             b_lower(4*n_poly+4+i)=waypts(i)-Corridor_r; b_upper(4*n_poly+4+i)=waypts(i)+Corridor_r;
         }
         //Velocity, acceleration constraints(2*n_poly equation)
-        #pragma omp parallel
         for (int j = 0; j < n_coef; j++){
             A.insert(5*n_poly+4+2*i,n_coef*i+j) = calc_tvec(ts(i),n_order,1)(j);
             b_upper(5*n_poly+4+2*i)=v_max; b_lower(5*n_poly+4+2*i)=-v_max;
@@ -550,9 +666,6 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
     //Initiate the solver
     if(!solver2.initSolver()) return b_all;
 
-    //Solve the QP problem. Try to catch exception(by engcang)
-    //Solve the QP problem. If error, use recursive function to increase corridor.
-    //Need check
     if(!solver2.solve()) {
       VectorXd p = Simulator::PolyQPGeneration(waypts, ts, n_order, Vel, Acc, Jerk, Corridor_r*1.2);
       return p;
@@ -567,24 +680,18 @@ int Simulator::Factorial(int x)
 {
   //Factorial Funation(ex Factorial(5)=5!)
     int fac = 1;
-    #pragma omp parallel
     for(int i = x; i > 0; i--)
         fac = fac * i;
     return fac;
 }
 
-MatrixXd Simulator::getQ(const int n,
-                                                  const int r,
-                                                  const double t1,
-                                                  const double t2){
+MatrixXd Simulator::getQ(const int n, const int r, const double t1, const double t2){
     //n=polynomial order
     //r=derivative order
     //t1:start time, t2=end time
     MatrixXd Q = MatrixXd::Zero(n+1,n+1);
-    #pragma omp parallel
     for (int i = r; i < n+1; i++)
     {
-        #pragma omp parallel
         for (int j = r; j < n+1; j++)
         {
             Q(i,j)=2*(Factorial(i)/Factorial(i-r))*(Factorial(j)/Factorial(j-r))
@@ -600,19 +707,15 @@ VectorXd Simulator::arrangeT(const Eigen::MatrixXd &waypts){
     VectorXd ts = VectorXd::Zero(num);
     double dist;
     ts(0) = 0;
-    #pragma omp parallel
     for (int i = 0; i < num-1; i++){
         dist = euclidean_dist(double(waypts(0,i)),double(waypts(1,i)),double(waypts(2,i)),double(waypts(0,i+1)),double(waypts(1,i+1)),double(waypts(2,i+1)));
-        ts(i+1) = ts(i)+dist/v_max*7;
+        ts(i+1) = ts(i)+dist/v_max*time_allocation;
     }
     return ts;
 }
 
-VectorXd Simulator::calc_tvec(const double t,
-                                                       const int n_order,
-                                                       const int r){
+VectorXd Simulator::calc_tvec(const double t, const int n_order, const int r){
     VectorXd tvec = VectorXd::Zero(n_order+1);
-    #pragma omp parallel
     for (int i = r; i < n_order+1; i++){
         tvec(i) = Factorial(i)/Factorial(i-r)*pow(t,i-r);
     }

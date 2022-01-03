@@ -2,7 +2,7 @@
 #define SIMULATION_H
 
 //// ROS
-#include "main2.h"
+#include "main.h"
 #include <ros/ros.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <mavros_msgs/CommandBool.h>

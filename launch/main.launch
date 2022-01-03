@@ -9,14 +9,18 @@
 
   <param name="/queuing_time" value="0.5"/>
   <param name="/point_numbers" value="10"/>
-  <param name="/traj_gen_hz2" value="3.333"/>
+  <param name="/traj_gen_hz" value="3.333"/>
   <param name="/min_dist" value="0.5"/>
   <param name="/max_dist" value="2.5"/>
-  <param name="/corridor_r" value="1.0"/>
+  <param name="/corridor_r" value="0.5"/>
+  <param name="/time_allocation" value="1.5"/>
   <param name="/v_max" value="5.0"/>
   <param name="/a_max" value="10.0"/>
+  <param name="/sim_type" value="3"/>
+  <param name="/C_coeff1" value="3"/>
+  <param name="/C_coeff2" value="0.1"/>
   <param name="/n_order" value="7"/>
-  <param name="/min_size" value="3"/>
+  <param name="/min_size" value="2"/>
   <param name="/predict_time" value="1.0"/>
   <param name="/rand_coeff" value="0.8"/>
 
@@ -28,7 +32,7 @@
   <param name="/debug" value="true"/>
   <param name="/deep_debug" value="false"/>
 
-  <node name="simulation_1" pkg="simulation" type="simulation_1" output="screen"/>
+  <node name="simulation_nmpc" pkg="2021_winter" type="simulation_nmpc" output="screen"/>
   <!-- launch-prefix="gdb -ex run --> <!--args" -->
 
   <node name="gt_to_path" pkg="simulation" type="gazebo_gt_to_path.py" output="screen">
