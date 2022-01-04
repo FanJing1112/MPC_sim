@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(2021_winter)
+project(nmpc_gen)
 
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-std=c++14")#-DEIGEN_USE_MKL_ALL")
@@ -31,6 +31,15 @@ find_package(catkin REQUIRED COMPONENTS
     std_msgs
     pcl_conversions
     pcl_ros
+    message_generation
+)
+
+add_message_files(
+    FILES
+    Info.msg
+)
+
+generate_messages(
 )
 
 #find_package(OpenCV REQUIRED)
@@ -47,11 +56,11 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIR}
   ${OsqpEigen_INCLUDE_DIR}
-  ${OpenCV_INCLUDE_DIR}
 )
 
 catkin_package(
     CATKIN_DEPENDS
+    message_runtime
 )
 
 

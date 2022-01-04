@@ -41,6 +41,9 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <visualization_msgs/Marker.h>
 
+//For rqt_plot
+#include <nmpc_gen/Info.h>
+
 using namespace std;
 using namespace std::chrono;
 using namespace Eigen;
@@ -60,6 +63,9 @@ class Simulator{
     ros::Publisher mpc_check_pub;
     ros::Publisher waypts_pub;
     ros::Publisher head_pub;
+    ros::Publisher Info_pub;
+
+    Matrix4f body_T_world=Matrix4f::Identity();
 
     bool detect_check=false, depth_check=false, drone_pose_check_first=false, drone_pose_check=false, debug=false, deep_debug=false, traj_gen_check=false;
     double traj_gen_hz, queuing_time, real_width, temp_depth, min_dist, max_dist, corridor_r, v_max, a_max, min_prob, time_allocation, predict_time=0.0;
@@ -74,6 +80,7 @@ class Simulator{
     nav_msgs::Odometry odom;
 
     geometry_msgs::Twist velocity;
+    nmpc_gen::Info info;
     vector<pcl::PointXYZ> queued_pts, way_pts;
     vector<double> xx;
     vector<double> yy;
@@ -136,6 +143,7 @@ class Simulator{
         waypts_pub = nh.advertise<visualization_msgs::MarkerArray>("/waypts", 10);
         local_vel_pub = nh.advertise<geometry_msgs::Twist>("/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
         head_pub = nh.advertise<visualization_msgs::Marker>( "/heading", 0 );
+        Info_pub = nh.advertise<nmpc_gen::Info>( "/Info", 10 );
         thread = nh.createTimer(ros::Duration(1/traj_gen_hz), &Simulator::drone_controller, this);
 
         ROS_WARN("class heritated, starting node...");
@@ -153,10 +161,10 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     curr_vel_z = odom.twist.twist.linear.z;
     tf::Quaternion q(odom.pose.pose.orientation.x, odom.pose.pose.orientation.y, odom.pose.pose.orientation.z, odom.pose.pose.orientation.w);
     tf::Matrix3x3 m(q);
+
     m.getRPY(curr_roll, curr_pitch, curr_yaw);
     curr_vel_x = temp_vx*cos(curr_yaw) - temp_vy*sin(curr_yaw);
     curr_vel_y = temp_vx*sin(curr_yaw) + temp_vy*cos(curr_yaw);
-
     //visualize drone traj
     VectorXd pos = VectorXd::Zero(3);
     pos(0)=curr_x; pos(1)=curr_y; pos(2)=curr_z;
@@ -211,8 +219,8 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
     }
     //Small fast circular
     if(sim_type == 2){
-      world_detected_point(0)=5*(cos(PI/80*(count3))-1);
-      world_detected_point(1)=5*sin(PI/80*(count3));
+      world_detected_point(0)=5*(cos(PI/60*(count3))-1);
+      world_detected_point(1)=5*sin(PI/60*(count3));
       world_detected_point(2)=1.5+count3/30;
     }
     //S shape
@@ -228,8 +236,6 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
       world_detected_point(2)=1.5+count3/60;
     }
     count3=count3+3;
-
-
 
     auto duration = duration_cast<microseconds>(high_resolution_clock::now() - start);
     if(duration.count()/1000000.0 > queuing_time){
@@ -451,9 +457,16 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         if(debug){
             ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
 //              ROS_INFO("d_v: (%.1f, %.1f, %.1f) c_v: (%.1f, %.1f, %.1f)", ux, uy, uz, curr_vel_x, curr_vel_y,curr_vel_z);
-//              ROS_INFO("roll: %.1f, pitch: %.1f, yaw: %.1f", curr_roll, curr_pitch, curr_yaw);
+              ROS_INFO("roll: %.1f, pitch: %.1f, yaw: %.1f", curr_roll, curr_pitch, curr_yaw);
         }
         local_vel_pub.publish(velocity);
+
+        info.vel_x = curr_vel_x;
+        info.vel_y = curr_vel_y;
+        info.vel_z = curr_vel_z;
+        info.velocity = euclidean_dist(curr_vel_x,curr_vel_y,curr_vel_z,0,0,0);
+        info.yaw = curr_yaw;
+        Info_pub.publish(info);
         ros::spinOnce();
     }
     else{
@@ -558,7 +571,7 @@ MatrixXd Simulator::MPC(const Eigen::MatrixXd &x_start,
     if(!mpcsolver.initSolver()) return D;
 
     if(!mpcsolver.solve()){
-      ROS_WARN("!!!!");
+      ROS_WARN("Controller Error");
       return D;
     }
 
@@ -664,9 +677,11 @@ MatrixXd Simulator::PolyQPGeneration(const Eigen::MatrixXd &waypts,
     if(!solver2.data()->setUpperBound(b_upper)) return b_all;
 
     //Initiate the solver
-    if(!solver2.initSolver()) return b_all;
-
+    if(!solver2.initSolver()){
+      return b_all;
+    }
     if(!solver2.solve()) {
+      ROS_WARN("Trajectory planner error");
       VectorXd p = Simulator::PolyQPGeneration(waypts, ts, n_order, Vel, Acc, Jerk, Corridor_r*1.2);
       return p;
     }
