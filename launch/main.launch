@@ -16,7 +16,7 @@
   <param name="/time_allocation" value="1.5"/>
   <param name="/v_max" value="5.0"/>
   <param name="/a_max" value="10.0"/>
-  <param name="/sim_type" value="3"/>
+  <param name="/sim_type" value="4"/>
   <param name="/C_coeff1" value="3"/>
   <param name="/C_coeff2" value="0.1"/>
   <param name="/n_order" value="7"/>

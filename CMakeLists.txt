@@ -37,6 +37,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files(
     FILES
     Info.msg
+    Control_info.msg
 )
 
 generate_messages(

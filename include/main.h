@@ -43,6 +43,7 @@
 
 //For rqt_plot
 #include <nmpc_gen/Info.h>
+#include <nmpc_gen/Control_info.h>
 
 using namespace std;
 using namespace std::chrono;
@@ -64,6 +65,7 @@ class Simulator{
     ros::Publisher waypts_pub;
     ros::Publisher head_pub;
     ros::Publisher Info_pub;
+    ros::Publisher Control_info_pub;
 
     Matrix4f body_T_world=Matrix4f::Identity();
 
@@ -81,6 +83,7 @@ class Simulator{
 
     geometry_msgs::Twist velocity;
     nmpc_gen::Info info;
+    nmpc_gen::Control_info Control_info;
     vector<pcl::PointXYZ> queued_pts, way_pts;
     vector<double> xx;
     vector<double> yy;
@@ -144,6 +147,7 @@ class Simulator{
         local_vel_pub = nh.advertise<geometry_msgs::Twist>("/mavros/setpoint_velocity/cmd_vel_unstamped", 10);
         head_pub = nh.advertise<visualization_msgs::Marker>( "/heading", 0 );
         Info_pub = nh.advertise<nmpc_gen::Info>( "/Info", 10 );
+        Control_info_pub = nh.advertise<nmpc_gen::Control_info>( "/Control_info", 10 );
         thread = nh.createTimer(ros::Duration(1/traj_gen_hz), &Simulator::drone_controller, this);
 
         ROS_WARN("class heritated, starting node...");
@@ -169,6 +173,13 @@ void Simulator::odom_callback(const nav_msgs::Odometry::ConstPtr& msg){
     VectorXd pos = VectorXd::Zero(3);
     pos(0)=curr_x; pos(1)=curr_y; pos(2)=curr_z;
     drone_pos.push_back(pos);
+
+    info.vel_x = curr_vel_x;
+    info.vel_y = curr_vel_y;
+    info.vel_z = curr_vel_z;
+    info.velocity = euclidean_dist(curr_vel_x,curr_vel_y,curr_vel_z,0,0,0);
+    info.yaw = curr_yaw;
+    Info_pub.publish(info);
 //    if (int(drone_pos.size())>100){
 //        drone_pos.erase(drone_pos.begin());
 //    }
@@ -448,25 +459,29 @@ void Simulator::drone_controller(const ros::TimerEvent& event){
         velocity.linear.z = uz;
         velocity.angular.x = 0.0;
         velocity.angular.y = 0.0;
-        if(abs(desired_yaw-curr_yaw)>abs(desired_yaw+curr_yaw)){
-            velocity.angular.z = k_yaw*(desired_yaw+curr_yaw);
+        if(desired_yaw*curr_yaw<0 && abs(desired_yaw-curr_yaw)>PI){
+            if(curr_yaw<0) {
+                velocity.angular.z = k_yaw*(-2*PI+desired_yaw-curr_yaw);
+            }
+            else{
+                velocity.angular.z = k_yaw*(2*PI+desired_yaw-curr_yaw);
+            }
         }
         else{
             velocity.angular.z = k_yaw*(desired_yaw-curr_yaw);
         }
         if(debug){
-            ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
+              ROS_INFO("ux : %.1f uy : %.1f uz : %.1f d_yaw: %.1f c_yaw: %.1f", ux, uy, uz, desired_yaw, curr_yaw);
 //              ROS_INFO("d_v: (%.1f, %.1f, %.1f) c_v: (%.1f, %.1f, %.1f)", ux, uy, uz, curr_vel_x, curr_vel_y,curr_vel_z);
               ROS_INFO("roll: %.1f, pitch: %.1f, yaw: %.1f", curr_roll, curr_pitch, curr_yaw);
         }
         local_vel_pub.publish(velocity);
 
-        info.vel_x = curr_vel_x;
-        info.vel_y = curr_vel_y;
-        info.vel_z = curr_vel_z;
-        info.velocity = euclidean_dist(curr_vel_x,curr_vel_y,curr_vel_z,0,0,0);
-        info.yaw = curr_yaw;
-        Info_pub.publish(info);
+        Control_info.u_x = ux;
+        Control_info.u_y = uy;
+        Control_info.u_z = uz;
+        Control_info_pub.publish(Control_info);
+
         ros::spinOnce();
     }
     else{
